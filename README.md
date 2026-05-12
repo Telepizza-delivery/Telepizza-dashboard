@@ -1,126 +1,157 @@
-# Resumen de Comunicación MQTT
-### Dashboard del Robot — Proyecto de Inteligencia Ambiental
+# Telepizza Dashboard — `Telepizza-dashboard`
+
+**Responsable:** Clarence
+**Asignatura:** Inteligencia Ambiental — Categoría C (seguimiento de calles)
+
+Aplicación cliente del sistema Telepizza. Es una **app de escritorio JavaFX** que permite al operario lanzar pedidos al robot LEGO EV3, ver el mapa de la ciudad pintado en tiempo real, seguir la posición del robot a más de 1 Hz y consultar el estado de cada pedido (recogiendo, recogido, entregado). Convive con [`telepizza-mapa`](https://github.com/Telepizza-delivery/telepizza-mapa) (planificación de rutas, Joseju) y [`telepizza-ev3`](https://github.com/Telepizza-delivery/telepizza-ev3) (robot, Pablo).
 
 ---
 
-## Broker
+## Índice
+
+1. [Qué hace la app](#1-qué-hace-la-app)
+2. [Estructura del proyecto](#2-estructura-del-proyecto)
+3. [Flujo del sistema](#3-flujo-del-sistema)
+4. [Cálculo de la odometría](#4-cálculo-de-la-odometría)
+5. [Protocolo MQTT](#5-protocolo-mqtt)
+6. [Puesta en marcha](#6-puesta-en-marcha)
+7. [Cumplimiento de los requisitos mínimos](#7-cumplimiento-de-los-requisitos-mínimos)
+
+---
+
+## 1. Qué hace la app
+
+- Recibe el mapa codificado por MQTT (`/map`) y lo **dibuja** en un canvas 5×7 con tiles PNG por tipo de bloque.
+- Marca con un borde amarillo y la letra "P" todos los **puntos válidos de recogida/entrega** y los autocompleta en los desplegables del formulario.
+- Permite **lanzar dos pedidos consecutivos**: cada uno se publica en `Equipo E/orders` con su id, recogida y entrega. La cola visual se actualiza al añadirlos.
+- Recibe **odometría** (lista de instrucciones completadas) y **estado** (PEDIDO\_RECIBIDO / RECOGIDO / LISTO) del robot, y los muestra en tiempo real:
+  - El punto naranja del robot se mueve por el mapa.
+  - El semáforo de tres luces refleja la fase actual.
+  - El pedido pasa al historial al recibir `LISTO`.
+
+---
+
+## 2. Estructura del proyecto
+
+```
+Telepizza-dashboard/
+└── robot-dashboard/
+    ├── pom.xml                       # Build con Maven, JavaFX y Paho MQTT
+    └── src/main/
+        ├── java/com/example/robot/
+        │   ├── RobotApp.java         # Punto de entrada JavaFX
+        │   ├── DashboardController.java # UI, layout y handlers MQTT
+        │   ├── MqttService.java      # Conexión, suscripciones y publish
+        │   ├── CityMap.java          # Decodifica y modela el mapa
+        │   ├── Tile.java             # Tipos de bloque (00-11) y conexiones
+        │   ├── MapCanvas.java        # Render del mapa + posición del robot
+        │   ├── RobotTracker.java     # Estado (row, col, heading) del robot
+        │   └── Order.java            # Modelo de pedido (id, recogida, entrega)
+        └── resources/tiles/          # PNGs de cada tipo de bloque
+```
+
+---
+
+## 3. Flujo del sistema
+
+Los 11 pasos del guión del equipo, vistos desde la app (★ = participación de Clarence):
+
+```
+Broker MQTT
+    │
+    ├── /map  (cada 60 s)
+    │      └─► ★ Dibuja el mapa y rellena los desplegables
+    │
+    ├── /Equipo E/orders   ◄── ★ Publish al añadir un pedido
+    │      └─► Joseju calcula la ruta y la encola
+    │
+    ├── /Equipo E/instructions  (Joseju → Pablo)
+    │      └─► Pablo ejecuta
+    │
+    ├── /Equipo E/odometry  ► ★ Lista de instrucciones completadas, cada 1 s
+    │      └─► ★ RobotTracker recalcula la casilla y MapCanvas la pinta
+    │
+    └── /Equipo E/status   ► ★ PEDIDO_RECIBIDO / RECOGIDO / LISTO
+           └─► ★ Semáforo de tres luces + historial al recibir LISTO
+```
+
+---
+
+## 4. Cálculo de la odometría
+
+El robot es deliberadamente "tonto": no sabe en qué casilla está. Solo informa de qué instrucciones ya ha completado. La posición la calcula esta app.
+
+`RobotTracker` aplica las instrucciones completadas a una posición/orientación inicial conocida:
+
+- **Casilla inicial:** siempre `(6, 0)` (esquina inferior izquierda — definida en el enunciado).
+- **Orientación inicial:** se deduce del tipo de bloque de `(6, 0)`:
+  - Si el bloque conecta hacia arriba (vertical) → mira al **norte**.
+  - Si conecta hacia la derecha (horizontal) → mira al **este**.
+- A partir de ahí cada `MOVE` avanza una casilla, cada `TURN_*` rota el heading. `PICK_UP` y `DELIVER` no afectan a la posición.
+
+El cálculo es **idempotente**: cada vez que llega un nuevo mensaje de odometría se reaplica toda la lista desde el snapshot inicial, por lo que un mensaje duplicado o perdido no rompe el estado.
+
+Al recibir `LISTO`, el tracker hace **snapshot** de la posición actual: el siguiente pedido empezará a aplicarse desde ahí (el robot no se ha movido, pero el contador de instrucciones de Pablo se resetea con cada pedido nuevo).
+
+---
+
+## 5. Protocolo MQTT
+
+### Broker
 
 | Ajuste | Valor |
 |---|---|
-| IP | `192.168.0.108` |
+| IP | `192.168.1.122` |
 | Puerto | `1883` |
-| Protocolo | MQTT v3 |
+| Red WiFi | `domotica` |
 
----
+### Topics
 
-## Resumen de Topics
-
-| Topic | Dirección | Quién lo envía |
+| Topic | Dirección | Formato |
 |---|---|---|
-| `map` | → Dashboard | Externo / broker (cada 60s) |
-| `robot/position` | → Dashboard | **Robot** |
-| `robot/order/status` | → Dashboard | **Robot** |
-| `EquipoE/orders` | → Robot | Dashboard |
+| `map` | servidor → app | Cadena de 70 caracteres (5×7 bloques × 2 dígitos) |
+| `Equipo E/orders` | app → mapa | `{"id":"ORD-xxx","pickup":[r,c],"delivery":[r,c]}` |
+| `Equipo E/odometry` | robot → app | `{"instructions":["MOVE","TURN_LEFT",...]}` (cada ≥1 Hz) |
+| `Equipo E/status` | robot → app | `PEDIDO_RECIBIDO` / `RECOGIDO` / `LISTO` (texto plano) |
+
+La app **no** se suscribe a `Equipo E/instructions`: no necesita conocer la ruta prevista, le basta con casilla inicial + orientación inicial + instrucciones completadas (ver sección 4).
 
 ---
 
-## 1. El robot envía su posición → `robot/position`
+## 6. Puesta en marcha
 
-El dashboard escucha este topic para mover el punto del robot en el mapa.
+### Requisitos
+- Java 21+ (LTS)
+- Maven 3.9+
+- Broker MQTT activo en `192.168.1.122:1883` (Mosquitto o equivalente).
 
-**Formato:** JSON
+### Build y ejecución
 
-```json
-{"row": 2, "col": 3}
+```bash
+cd Telepizza-dashboard/robot-dashboard
+mvn javafx:run
 ```
 
-| Campo | Tipo | Descripción |
-|---|---|---|
-| `row` | entero | Índice de fila en la cuadrícula del mapa (base 0, arriba = 0) |
-| `col` | entero | Índice de columna en la cuadrícula del mapa (base 0, izquierda = 0) |
+El plugin `javafx-maven-plugin` arranca directamente la clase `com.example.robot.RobotApp`. La conexión MQTT se establece automáticamente en `RobotApp.start()` después de mostrar la ventana.
 
-**QoS:** 0 (enviar y olvidar — las actualizaciones de posición son frecuentes, perder una no es problema)
+### Uso
 
-El robot debe publicar esto cada vez que se mueva a una nueva celda.
-
----
-
-## 2. El robot envía el progreso del pedido → `robot/order/status`
-
-El dashboard escucha este topic para actualizar la barra de progreso y el panel del pedido actual.
-
-**Formato:** JSON
-
-```json
-{
-  "id": "ORD-042",
-  "progress": 0.6,
-  "status": "IN_PROGRESS",
-  "pickupRow": 0,
-  "pickupCol": 0,
-  "deliveryRow": 3,
-  "deliveryCol": 4
-}
-```
-
-| Campo | Tipo | Descripción |
-|---|---|---|
-| `id` | cadena | ID del pedido, p. ej. `"ORD-042"` |
-| `progress` | decimal | 0.0 (sin empezar) → 1.0 (completado) |
-| `status` | cadena | `"IN_PROGRESS"`, `"COMPLETED"` o `"PENDING"` |
-| `pickupRow` | entero | Fila del punto de recogida |
-| `pickupCol` | entero | Columna del punto de recogida |
-| `deliveryRow` | entero | Fila del punto de entrega |
-| `deliveryCol` | entero | Columna del punto de entrega |
-
-**QoS:** 0
+1. Esperar a que aparezca el mapa (al recibir el primer `/map`).
+2. Seleccionar punto de recogida y entrega en los desplegables (sólo se muestran las casillas válidas según el mapa).
+3. Pulsar **Añadir pedido**. Se publica en `Equipo E/orders` y el pedido aparece en la cola.
+4. Repetir para el segundo pedido (cola FIFO).
+5. Observar el robot moverse por el mapa, el semáforo cambiar de color y el historial llenarse al completar entregas.
 
 ---
 
-## 3. El dashboard envía un nuevo pedido → `EquipoE/orders`
+## 7. Cumplimiento de los requisitos mínimos
 
-Cuando un usuario añade un pedido en la interfaz del dashboard, se publica en este topic. El robot debe suscribirse aquí para recibir su próximo trabajo.
+Del enunciado del proyecto:
 
-**Formato:** JSON
-
-```json
-{
-  "id": "ORD-001",
-  "pickupRow": 1,
-  "pickupCol": 2,
-  "deliveryRow": 4,
-  "deliveryCol": 3
-}
-```
-
-| Campo | Tipo | Descripción |
-|---|---|---|
-| `id` | cadena | ID único del pedido |
-| `pickupRow` | entero | Fila de la celda de recogida |
-| `pickupCol` | entero | Columna de la celda de recogida |
-| `deliveryRow` | entero | Fila de la celda de entrega |
-| `deliveryCol` | entero | Columna de la celda de entrega |
-
-**QoS:** 1 (al menos una vez — los pedidos no se pueden perder)
+- **R1 — Lanzar un pedido y poner otro en cola:** ✅ Formulario + cola FIFO en el panel derecho. Cualquier número de pedidos válidos se acepta.
+- **R2 — Mostrar odometría a ≥ 1 Hz:** ✅ El robot publica cada 1 s y el tracker recalcula la casilla inmediatamente.
+- **R3 — Recoger en A y entregar en B dos veces:** ✅ Soportado a nivel de protocolo y UI; depende del subsistema robot.
 
 ---
 
-## 4. Topic del mapa → `map` *(el robot no necesita enviar esto)*
-
-El dashboard recibe el diseño del mapa de la ciudad como una cadena de códigos de 2 dígitos cada 60 segundos. El robot no necesita publicar aquí — esto llega desde otro lugar (p. ej. un servidor de mapas o un script de prueba).
-
-**Formato:** cadena de texto, p. ej. `"010203..."` — cada par de dígitos es el código de una celda, leído de izquierda a derecha y de arriba a abajo. El mapa tiene 5 columnas × 7 filas = 70 dígitos en total.
-
----
-
-## Lista de verificación para el equipo del robot
-
-- [ ] Conectarse al broker en `192.168.0.108:1883`
-- [ ] **Suscribirse** a `EquipoE/orders` (QoS 1) para recibir pedidos
-- [ ] **Publicar** en `robot/position` (QoS 0) en cada movimiento de celda: `{"row": F, "col": C}`
-- [ ] **Publicar** en `robot/order/status` (QoS 0) cuando cambie el estado del pedido
-- [ ] Enviar `"status": "COMPLETED"` y `"progress": 1.0` cuando un pedido esté completado
-
----
-
-*Generado a partir de: `MqttService.java` y `DashboardController.java`*
+*Última actualización: 12-05-2026*
