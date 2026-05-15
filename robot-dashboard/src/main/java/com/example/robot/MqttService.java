@@ -17,7 +17,7 @@ import java.util.function.Consumer;
  */
 public class MqttService {
 
-    public static final String BROKER_URL = "tcp://192.168.1.122:1883";
+    public static final String BROKER_URL = "tcp://192.168.137.1:1883";
     private static final String CLIENT_ID = "RobotDashboard-JavaFX-" + System.currentTimeMillis();
 
     public static final String TOPIC_MAP       = "map";
@@ -46,10 +46,17 @@ public class MqttService {
         opts.setKeepAliveInterval(30);
         opts.setAutomaticReconnect(true);
 
-        client.setCallback(new MqttCallback() {
+        client.setCallback(new MqttCallbackExtended() {
+            @Override
+            public void connectComplete(boolean reconnect, String serverURI) {
+                notifyStatus(reconnect
+                        ? "MQTT: reconectado a " + serverURI
+                        : "MQTT: conectado a "   + serverURI);
+            }
+
             @Override
             public void connectionLost(Throwable cause) {
-                notifyStatus("MQTT: conexion perdida - " + cause.getMessage());
+                notifyStatus("MQTT: conexion perdida - intentando reconectar...");
             }
 
             @Override
@@ -72,7 +79,7 @@ public class MqttService {
         client.subscribe(TOPIC_MAP,      1);
         client.subscribe(TOPIC_ODOMETRY, 0);
         client.subscribe(TOPIC_STATUS,   0);
-        notifyStatus("MQTT: conectado a " + BROKER_URL);
+//        notifyStatus("MQTT: conectado a " + BROKER_URL);
 
         Runtime.getRuntime().addShutdownHook(new Thread(this::disconnect));
     }

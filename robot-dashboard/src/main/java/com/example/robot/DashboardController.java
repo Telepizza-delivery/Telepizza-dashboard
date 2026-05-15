@@ -48,8 +48,6 @@ public class DashboardController {
     private Label     lblStatus;
     private Label     lblMqttStatus;
     private Label     lblMapRaw;
-    private ComboBox<String> cbPickup;
-    private ComboBox<String> cbDelivery;
 
     // Semaforo de status del robot
     private Label dotPedidoRecibido;
@@ -66,6 +64,18 @@ public class DashboardController {
     private final List<String> queuedIds = new ArrayList<>();
     private String activeOrderId = null;
 
+    // Click-to-select state
+    private enum ClickMode { PICKUP, DELIVERY, NONE }
+    private ClickMode clickMode = ClickMode.NONE;
+
+    private Label lblPickupSelection;
+    private Label lblDeliverySelection;
+    private Label lblFormStatus;
+    private final int[] orderCounter = {1};
+
+    private int selPickupRow = -1, selPickupCol = -1;
+    private int selDeliveryRow = -1, selDeliveryCol = -1;
+
     private final MqttService mqtt = new MqttService();
 
     // ──────────────────────────────────────────────
@@ -77,18 +87,37 @@ public class DashboardController {
         root.setPadding(new Insets(12));
         root.setStyle("-fx-background-color: #f7f7f5;");
 
+        // ── LEFT: mapa + leyenda + barra MQTT conectado ──
         mapCanvas = new MapCanvas(420, 588);
-        VBox mapBox = new VBox(8, sectionLabel("Mapa de ciudad"), mapCanvas, buildLegend());
+        mapCanvas.setOnMouseClicked(e -> handleMapClick(e.getX(), e.getY()));
+        lblMqttStatus = new Label("Desconectado");
+        lblMqttStatus.setStyle("-fx-font-size: 11; -fx-text-fill: #888;");
+        Label mqttBroker = new Label(MqttService.BROKER_URL + "  |  Equipo E");
+        mqttBroker.setStyle("-fx-font-size: 10; -fx-text-fill: #aaa;");
+        VBox mqttBarLeft = new VBox(2, lblMqttStatus, mqttBroker);
+        mqttBarLeft.setPadding(new Insets(4, 0, 0, 0));
+
+        VBox mapBox = new VBox(8, sectionLabel("Mapa de ciudad"), buildLegend(), mapCanvas, mqttBarLeft);
         mapBox.setPadding(new Insets(8));
         mapBox.setStyle("-fx-background-color: white; -fx-background-radius: 10; -fx-border-color: #e0e0e0; -fx-border-radius: 10;");
         root.setLeft(mapBox);
 
-        VBox right = new VBox(10, buildCurrentOrderPanel(), buildQueuePanel(),
-                              buildHistoryPanel(), buildStatusSemaphorePanel(),
-                              buildMqttInfoPanel());
-        right.setPrefWidth(300);
-        BorderPane.setMargin(right, new Insets(0, 0, 0, 10));
-        root.setCenter(right);
+        // ── CENTRE: Pedido actual + Gestión de pedidos (sin cola) + Estado del robot ──
+        VBox centre = new VBox(10,
+                buildCurrentOrderPanel(),
+                buildQueuePanelNoQueue(),
+                buildStatusSemaphorePanel());
+        centre.setPrefWidth(300);
+        BorderPane.setMargin(centre, new Insets(0, 10, 0, 10));
+        root.setCenter(centre);
+
+        // ── RIGHT: Cola + Historial + MQTT info ──
+        VBox rightCol = new VBox(10,
+                buildColaPanel(),
+                buildHistoryPanel(),
+                buildMqttInfoPanel());
+        rightCol.setPrefWidth(300);
+        root.setRight(rightCol);
 
         lblStatus = new Label("Iniciando...");
         lblMapRaw = new Label("");
@@ -120,53 +149,77 @@ public class DashboardController {
         return wrapPanel(new VBox(6, sectionLabel("Pedido actual"), inner));
     }
 
-    private VBox buildQueuePanel() {
-        cbPickup   = new ComboBox<>();
-        cbDelivery = new ComboBox<>();
-        cbPickup.setPromptText("Punto de recogida");
-        cbDelivery.setPromptText("Punto de entrega");
-        cbPickup.setMaxWidth(Double.MAX_VALUE);
-        cbDelivery.setMaxWidth(Double.MAX_VALUE);
+    /** Centro: formulario de gestión de pedidos SIN la lista de cola. */
+    private VBox buildQueuePanelNoQueue() {
+        // Punto de origen
+        Label lblPickupTag = new Label("Punto de origen");
+        lblPickupTag.setStyle("-fx-font-size: 11; -fx-text-fill: #555;");
+        lblPickupSelection = new Label("— toca un punto en el mapa");
+        lblPickupSelection.setStyle("-fx-font-size: 12; -fx-text-fill: #999;");
 
-        final int[] orderCounter = {1};
+        Button btnSelectPickup = new Button("Seleccionar recogida");
+        btnSelectPickup.setMaxWidth(Double.MAX_VALUE);
+        btnSelectPickup.setStyle("-fx-font-size: 11;");
+        btnSelectPickup.setOnAction(e -> {
+            clickMode = ClickMode.PICKUP;
+            lblFormStatus.setStyle("-fx-font-size: 11; -fx-text-fill: #3B6D11;");
+            lblFormStatus.setText("Haz clic en el mapa para elegir el punto de recogida.");
+        });
 
-        Button btnAdd = new Button("Anadir pedido");
+        // Punto de destino
+        Label lblDeliveryTag = new Label("Punto de destino");
+        lblDeliveryTag.setStyle("-fx-font-size: 11; -fx-text-fill: #555;");
+        lblDeliveryTag.setPadding(new Insets(4, 0, 0, 0));
+        lblDeliverySelection = new Label("— toca un punto en el mapa");
+        lblDeliverySelection.setStyle("-fx-font-size: 12; -fx-text-fill: #999;");
+
+        Button btnSelectDelivery = new Button("Seleccionar entrega");
+        btnSelectDelivery.setMaxWidth(Double.MAX_VALUE);
+        btnSelectDelivery.setStyle("-fx-font-size: 11;");
+        btnSelectDelivery.setOnAction(e -> {
+            clickMode = ClickMode.DELIVERY;
+            lblFormStatus.setStyle("-fx-font-size: 11; -fx-text-fill: #3B6D11;");
+            lblFormStatus.setText("Haz clic en el mapa para elegir el punto de entrega.");
+        });
+
+        Button btnAdd = new Button("Añadir pedido");
         btnAdd.setMaxWidth(Double.MAX_VALUE);
         btnAdd.setStyle("-fx-font-size: 12;");
 
-        Label lblFormStatus = new Label("");
+        lblFormStatus = new Label("");
         lblFormStatus.setStyle("-fx-font-size: 11; -fx-text-fill: #3B6D11;");
 
         btnAdd.setOnAction(e -> {
-            String pickup   = cbPickup.getValue();
-            String delivery = cbDelivery.getValue();
-
-            if (pickup == null || delivery == null) {
+            if (selPickupRow < 0 || selDeliveryRow < 0) {
                 lblFormStatus.setStyle("-fx-font-size: 11; -fx-text-fill: #e24b4a;");
-                lblFormStatus.setText("Selecciona recogida y entrega.");
+                lblFormStatus.setText("Selecciona recogida y entrega en el mapa.");
                 return;
             }
-            if (pickup.equals(delivery)) {
+            if (selPickupRow == selDeliveryRow && selPickupCol == selDeliveryCol) {
                 lblFormStatus.setStyle("-fx-font-size: 11; -fx-text-fill: #e24b4a;");
                 lblFormStatus.setText("Recogida y entrega no pueden ser iguales.");
                 return;
             }
 
             String orderId = "ORD-" + String.format("%03d", orderCounter[0]++);
-            String[] p = pickup.split(",");
-            String[] d = delivery.split(",");
-
-            // Formato del guion: {"id":"ORD-xxx","pickup":[r,c],"delivery":[r,c]}
             String json = String.format(
-                    "{\"id\":\"%s\",\"pickup\":[%s,%s],\"delivery\":[%s,%s]}",
-                    orderId, p[0], p[1], d[0], d[1]);
+                    "{\"id\":\"%s\",\"pickup\":[%d,%d],\"delivery\":[%d,%d]}",
+                    orderId, selPickupRow, selPickupCol, selDeliveryRow, selDeliveryCol);
 
             try {
                 mqtt.publish(MqttService.TOPIC_ORDERS, json);
-                queueItems.add(orderId + "  (" + pickup + ") -> (" + delivery + ")");
+                queueItems.add(orderId + "  (" + selPickupRow + "," + selPickupCol
+                        + ") -> (" + selDeliveryRow + "," + selDeliveryCol + ")");
+                System.out.println("Queue size: " + queueItems.size());
                 queuedIds.add(orderId);
-                cbPickup.setValue(null);
-                cbDelivery.setValue(null);
+                // Reset selections
+                selPickupRow = selPickupCol = selDeliveryRow = selDeliveryCol = -1;
+                mapCanvas.clearSelections();
+                lblPickupSelection.setText("— toca un punto en el mapa");
+                lblPickupSelection.setStyle("-fx-font-size: 12; -fx-text-fill: #999;");
+                lblDeliverySelection.setText("— toca un punto en el mapa");
+                lblDeliverySelection.setStyle("-fx-font-size: 12; -fx-text-fill: #999;");
+                clickMode = ClickMode.NONE;
                 lblFormStatus.setStyle("-fx-font-size: 11; -fx-text-fill: #3B6D11;");
                 lblFormStatus.setText("Pedido " + orderId + " enviado");
             } catch (Exception ex) {
@@ -175,19 +228,74 @@ public class DashboardController {
             }
         });
 
-        VBox form = new VBox(6, cbPickup, cbDelivery, btnAdd, lblFormStatus);
-        listQueue = new ListView<>(queueItems);
-        listQueue.setPrefHeight(80);
-        listQueue.setStyle("-fx-font-size: 12;");
+        VBox form = new VBox(5,
+                lblPickupTag, lblPickupSelection, btnSelectPickup,
+                lblDeliveryTag, lblDeliverySelection, btnSelectDelivery,
+                btnAdd, lblFormStatus);
 
-        return wrapPanel(new VBox(8, sectionLabel("Gestion de pedidos"), form,
-                                  sectionLabel("Cola"), listQueue));
+        return wrapPanel(new VBox(8, sectionLabel("Gestion de pedidos"), form));
+    }
+
+    /** Derecha: cola de pedidos (lista grande y scrollable). */
+    private VBox buildColaPanel() {
+        listQueue = new ListView<>(queueItems);
+        listQueue.setPrefHeight(220);
+        listQueue.setStyle("-fx-font-size: 13;");
+        VBox.setVgrow(listQueue, Priority.ALWAYS);
+        return wrapPanel(new VBox(6, sectionLabel("Cola"), listQueue));
+    }
+
+    /** Called when the user clicks anywhere on the MapCanvas. */
+    private void handleMapClick(double pixelX, double pixelY) {
+        if (currentMap == null || clickMode == ClickMode.NONE) return;
+
+        // Mirror the MARGIN + cellSize arithmetic from MapCanvas.redraw()
+        final double MARGIN = 22;
+        double gridW = mapCanvas.getWidth()  - MARGIN;
+        double gridH = mapCanvas.getHeight() - MARGIN;
+        double cellW = gridW / currentMap.getCols();
+        double cellH = gridH / currentMap.getRows();
+
+        int col = (int) ((pixelX - MARGIN) / cellW);
+        int row = (int) ((pixelY - MARGIN) / cellH);
+
+        if (row < 0 || row >= currentMap.getRows() || col < 0 || col >= currentMap.getCols()) return;
+
+        boolean isValid = false;
+        for (int[] p : currentMap.getPickupPoints()) {
+            if (p[0] == row && p[1] == col) { isValid = true; break; }
+        }
+        if (!isValid) {
+            lblFormStatus.setStyle("-fx-font-size: 11; -fx-text-fill: #e24b4a;");
+            lblFormStatus.setText("Ese tile no es un punto de recogida/entrega.");
+            return;
+        }
+
+        String coord = row + "," + col;
+        if (clickMode == ClickMode.PICKUP) {
+            selPickupRow = row; selPickupCol = col;
+            mapCanvas.setSelectedPickup(row, col);
+            lblPickupSelection.setText("✔ (" + coord + ")");
+            lblPickupSelection.setStyle("-fx-font-size: 12; -fx-text-fill: #00aa33; -fx-font-weight: bold;");
+            clickMode = ClickMode.DELIVERY;   // auto-advance to delivery
+            lblFormStatus.setStyle("-fx-font-size: 11; -fx-text-fill: #3B6D11;");
+            lblFormStatus.setText("Recogida fijada. Ahora haz clic en el punto de entrega.");
+        } else {
+            selDeliveryRow = row; selDeliveryCol = col;
+            mapCanvas.setSelectedDelivery(row, col);
+            lblDeliverySelection.setText("✔ (" + coord + ")");
+            lblDeliverySelection.setStyle("-fx-font-size: 12; -fx-text-fill: #1a5fa5; -fx-font-weight: bold;");
+            clickMode = ClickMode.NONE;
+            lblFormStatus.setStyle("-fx-font-size: 11; -fx-text-fill: #3B6D11;");
+            lblFormStatus.setText("Entrega fijada. Pulsa 'Añadir pedido' para confirmar.");
+        }
     }
 
     private VBox buildHistoryPanel() {
         listHistory = new ListView<>(historyItems);
-        listHistory.setPrefHeight(100);
-        listHistory.setStyle("-fx-font-size: 12;");
+        listHistory.setPrefHeight(220);
+        listHistory.setStyle("-fx-font-size: 13;");
+        VBox.setVgrow(listHistory, Priority.ALWAYS);
         return wrapPanel(new VBox(6, sectionLabel("Historial"), listHistory));
     }
 
@@ -202,10 +310,9 @@ public class DashboardController {
     }
 
     private VBox buildMqttInfoPanel() {
-        lblMqttStatus = new Label("Desconectado");
-        lblMqttStatus.setStyle("-fx-font-size: 11; -fx-text-fill: #888;");
         Label info = new Label(MqttService.BROKER_URL + "  |  Equipo E");
         info.setStyle("-fx-font-size: 11; -fx-text-fill: #aaa;");
+        // lblMqttStatus already created in buildUI
         return wrapPanel(new VBox(4, sectionLabel("MQTT"), lblMqttStatus, info));
     }
 
@@ -253,14 +360,6 @@ public class DashboardController {
                 lblMapRaw.setText("Map: " + payload.substring(0, Math.min(40, payload.length())) + "...");
                 lblStatus.setText("Mapa actualizado - " + map.getPickupPoints().size()
                         + " puntos. Robot mira " + h0 + " desde (" + START_ROW + "," + START_COL + ")");
-
-                // Rellenar combos con los puntos de recogida/entrega detectados.
-                List<String> points = new ArrayList<>();
-                for (int[] p : map.getPickupPoints()) {
-                    points.add(p[0] + "," + p[1]);
-                }
-                if (cbPickup != null)   cbPickup.getItems().setAll(points);
-                if (cbDelivery != null) cbDelivery.getItems().setAll(points);
             });
         } catch (Exception e) {
             System.out.println("PARSE ERROR: " + e.getMessage());
