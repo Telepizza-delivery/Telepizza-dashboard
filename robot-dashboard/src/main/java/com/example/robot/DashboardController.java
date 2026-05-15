@@ -92,9 +92,7 @@ public class DashboardController {
         mapCanvas.setOnMouseClicked(e -> handleMapClick(e.getX(), e.getY()));
         lblMqttStatus = new Label("Desconectado");
         lblMqttStatus.setStyle("-fx-font-size: 11; -fx-text-fill: #888;");
-        Label mqttBroker = new Label(MqttService.BROKER_URL + "  |  Equipo E");
-        mqttBroker.setStyle("-fx-font-size: 10; -fx-text-fill: #aaa;");
-        VBox mqttBarLeft = new VBox(2, lblMqttStatus, mqttBroker);
+        VBox mqttBarLeft = new VBox(2, lblMqttStatus);
         mqttBarLeft.setPadding(new Insets(4, 0, 0, 0));
 
         VBox mapBox = new VBox(8, sectionLabel("Mapa de ciudad"), buildLegend(), mapCanvas, mqttBarLeft);
@@ -159,7 +157,7 @@ public class DashboardController {
 
         Button btnSelectPickup = new Button("Seleccionar recogida");
         btnSelectPickup.setMaxWidth(Double.MAX_VALUE);
-        btnSelectPickup.setStyle("-fx-font-size: 11;");
+        styleButton(btnSelectPickup, false);
         btnSelectPickup.setOnAction(e -> {
             clickMode = ClickMode.PICKUP;
             lblFormStatus.setStyle("-fx-font-size: 11; -fx-text-fill: #3B6D11;");
@@ -175,7 +173,7 @@ public class DashboardController {
 
         Button btnSelectDelivery = new Button("Seleccionar entrega");
         btnSelectDelivery.setMaxWidth(Double.MAX_VALUE);
-        btnSelectDelivery.setStyle("-fx-font-size: 11;");
+        styleButton(btnSelectDelivery, false);
         btnSelectDelivery.setOnAction(e -> {
             clickMode = ClickMode.DELIVERY;
             lblFormStatus.setStyle("-fx-font-size: 11; -fx-text-fill: #3B6D11;");
@@ -184,7 +182,7 @@ public class DashboardController {
 
         Button btnAdd = new Button("Añadir pedido");
         btnAdd.setMaxWidth(Double.MAX_VALUE);
-        btnAdd.setStyle("-fx-font-size: 12;");
+        styleButton(btnAdd, true);
 
         lblFormStatus = new Label("");
         lblFormStatus.setStyle("-fx-font-size: 11; -fx-text-fill: #3B6D11;");
@@ -472,6 +470,17 @@ public class DashboardController {
         return l;
     }
 
+    private static void styleButton(Button btn, boolean isPrimary) {
+        String base = isPrimary
+                ? "-fx-background-color: #2a2a2a; -fx-text-fill: white; -fx-font-weight: bold;"
+                : "-fx-background-color: #ebebeb; -fx-text-fill: #333; -fx-font-weight: normal;";
+        String shared = " -fx-font-size: 12; -fx-background-radius: 6; -fx-border-width: 0; -fx-cursor: hand; -fx-padding: 6 10 6 10;";
+        btn.setStyle(base + shared);
+        String hoverColor = isPrimary ? "#444444" : "#d6d6d6";
+        btn.setOnMouseEntered(e -> btn.setStyle(base + shared + " -fx-background-color: " + hoverColor + ";"));
+        btn.setOnMouseExited(e  -> btn.setStyle(base + shared));
+    }
+
     private static VBox wrapPanel(VBox inner) {
         inner.setPadding(new Insets(10));
         inner.setStyle("-fx-background-color: white; -fx-background-radius: 10; -fx-border-color: #e0e0e0; -fx-border-radius: 10;");
@@ -520,5 +529,8 @@ public class DashboardController {
     private void paintDotActive(Label l, String colorHex) {
         l.setStyle("-fx-font-size: 12; -fx-text-fill: white; -fx-background-color: " + colorHex
                 + "; -fx-background-radius: 4; -fx-padding: 4 6 4 6; -fx-font-weight: bold;");
+    }
+    public void stopMqtt() {
+        mqtt.disconnect();
     }
 }
