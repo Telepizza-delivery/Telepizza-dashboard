@@ -22,7 +22,7 @@ import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
  */
 public class MqttService {
 
-    public static final String BROKER_URL = "tcp://192.168.0.103:1883";
+    public static final String BROKER_URL = "tcp://192.168.0.105:1883";
     private static final String CLIENT_ID = "RobotDashboard-JavaFX-" + System.currentTimeMillis();
 
     public static final String TOPIC_MAP       = "map";
