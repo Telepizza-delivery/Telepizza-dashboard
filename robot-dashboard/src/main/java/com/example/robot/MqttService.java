@@ -23,7 +23,7 @@ import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 public class MqttService {
 
     public static final String BROKER_URL = "tcp://"
-            + System.getenv().getOrDefault("IP_ADDRESS_SERVER", "192.168.137.2")
+            + System.getenv().getOrDefault("IP_ADDRESS_SERVER", "192.168.0.119")
             + ":"
             + System.getenv().getOrDefault("PORT_SERVER", "1883");
     private static final String CLIENT_ID = System.getenv().getOrDefault(
@@ -49,8 +49,8 @@ public class MqttService {
         if (client != null && client.isConnected()) return;
         client = new MqttClient(BROKER_URL, CLIENT_ID, new MemoryPersistence());
 
-        System.out.println("BROKER_URL = " + BROKER_URL);
-        System.out.println("CLIENT_ID = " + CLIENT_ID);
+//        System.out.println("BROKER_URL = " + BROKER_URL);
+//        System.out.println("CLIENT_ID = " + CLIENT_ID);
 
         MqttConnectOptions opts = new MqttConnectOptions();
         opts.setCleanSession(true);

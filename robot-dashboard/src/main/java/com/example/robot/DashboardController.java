@@ -209,7 +209,7 @@ public class DashboardController {
                 mqtt.publish(MqttService.TOPIC_ORDERS, json);
                 queueItems.add(orderId + "  (" + selPickupRow + "," + selPickupCol
                         + ") -> (" + selDeliveryRow + "," + selDeliveryCol + ")");
-                System.out.println("Queue size: " + queueItems.size());
+//                System.out.println("Queue size: " + queueItems.size());
                 queuedIds.add(orderId);
                 orderLabels.put(orderId, "(" + selPickupRow + "," + selPickupCol + ") → (" + selDeliveryRow + "," + selDeliveryCol + ")");
                 // Reset selections
@@ -344,7 +344,7 @@ public class DashboardController {
     // ──────────────────────────────────────────────
 
     private void handleMapPayload(String payload) {
-        System.out.println("Map received, length: " + payload.length());
+//        System.out.println("Map received, length: " + payload.length());
         try {
             CityMap map = new CityMap(payload, MAP_COLS, MAP_ROWS);
             Platform.runLater(() -> {
@@ -362,7 +362,7 @@ public class DashboardController {
                         + " puntos. Robot mira " + h0 + " desde (" + START_ROW + "," + START_COL + ")");
             });
         } catch (Exception e) {
-            System.out.println("PARSE ERROR: " + e.getMessage());
+//            System.out.println("PARSE ERROR: " + e.getMessage());
             Platform.runLater(() -> lblStatus.setText("Error al parsear mapa: " + e.getMessage()));
         }
     }
